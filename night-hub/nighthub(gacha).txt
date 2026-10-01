@@ -1,0 +1,548 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local LocalPlayer = Players.LocalPlayer
+
+local Config = {
+	Fruit = "Rocket-Rocket",
+	Inventory = true,
+	Backpack = true,
+}
+
+local FruitDB = {
+	List = {
+		{ "Rocket-Rocket", 1, 15111559066, "Rocket" },
+		{ "Spin-Spin", 1, 15100405975, "Spin" },
+		{ "Blade-Blade", 1, 15100283484, "Blade" },
+		{ "Spring-Spring", 1, 15100296592, "Spring" },
+		{ "Bomb-Bomb", 1, 15116740364, "Bomb" },
+		{ "Smoke-Smoke", 1, 15116736973, "Smoke" },
+		{ "Spike-Spike", 1, 15100305232, "Spike" },
+		{ "Flame-Flame", 2, 15116721102, "Flame" },
+		{ "Ice-Ice", 2, 15100413167, "Ice" },
+		{ "Sand-Sand", 2, 15116730678, "Sand" },
+		{ "Dark-Dark", 2, 15116709398, "Dark" },
+		{ "Eagle-Eagle", 2, 95497683276556, "Eagle" },
+		{ "Diamond-Diamond", 2, 15116699971, "Diamond" },
+		{ "Light-Light", 3, 15100273645, "Light" },
+		{ "Rubber-Rubber", 3, 15100391878, "Rubber" },
+		{ "Ghost-Ghost", 3, 15155517739, "Ghost" },
+		{ "Magma-Magma", 3, 15100350351, "Magma" },
+		{ "Quake-Quake", 4, 15057683975, "Quake" },
+		{ "Buddha-Buddha", 4, 15100313450, "Buddha" },
+		{ "Love-Love", 4, 15116726173, "Love" },
+		{ "Creation-Creation", 4, 111044311177770, "Creation" },
+		{ "Spider-Spider", 4, 15116693099, "Spider" },
+		{ "Sound-Sound", 4, 14661837634, "Sound" },
+		{ "Phoenix-Phoenix", 4, 15100263132, "Phoenix" },
+		{ "Portal-Portal", 4, 15116714606, "Portal" },
+		{ "Lightning-Lightning", 4, 79609198967782, "Lightning" },
+		{ "Pain-Pain", 4, 15116757054, "Pain" },
+		{ "Blizzard-Blizzard", 4, 15100381970, "Blizzard" },
+		{ "Gravity-Gravity", 5, 15100326932, "Gravity" },
+		{ "Mammoth-Mammoth", 5, 14661873358, "Mammoth" },
+		{ "T-Rex-T-Rex", 5, 15708895163, "T-Rex" },
+		{ "Dough-Dough", 5, 15100253415, "Dough" },
+		{ "Shadow-Shadow", 5, 15116685626, "Shadow" },
+		{ "Venom-Venom", 5, 10837837959, "Venom" },
+		{ "Gas-Gas", 5, 118054805452821, "Gas" },
+		{ "Control-Control", 5, 15100184583, "Control" },
+		{ "Spirit-Spirit", 5, 11911905519, "Spirit" },
+		{ "Leopard-Leopard", 5, 15100370210, "Leopard" },
+		{ "Yeti-Yeti", 5, 115276580506154, "Yeti" },
+		{ "Kitsune-Kitsune", 5, 15482881956, "Kitsune" },
+		{ "Dragon-Dragon", 5, 125537919406697, "Dragon" },
+		{ "Dragon (West)-Dragon (West)", 5, 97619572915688, "Dragon (West)" },
+		{ "Dragon (East)-Dragon (East)", 5, 125537919406697, "Dragon (East)" },
+	},
+}
+
+function FruitDB.Find(query)
+	for _, entry in ipairs(FruitDB.List) do
+		if entry[1] == query or entry[4] == query then
+			return entry
+		end
+	end
+	return nil
+end
+
+function FruitDB.GetNames()
+	local names = {}
+	for _, entry in ipairs(FruitDB.List) do
+		table.insert(names, entry[1])
+	end
+	return names
+end
+
+local PropDecoder = {
+	Ignore = {
+		CFrame = true,
+		WorldPivot = true,
+		Position = true,
+		Orientation = true,
+		Rotation = true,
+	},
+}
+
+function PropDecoder.Decode(val)
+	if type(val) ~= "table" then
+		return val
+	end
+	local t = val._t
+	if t == "V3" then
+		return Vector3.new(val.x, val.y, val.z)
+	elseif t == "CF" then
+		return CFrame.new(unpack(val.c))
+	elseif t == "C3" then
+		return Color3.new(val.r, val.g, val.b)
+	elseif t == "BC" then
+		return BrickColor.new(val.n)
+	elseif t == "E" then
+		local ok, enumVal = pcall(function()
+			return Enum[val.e][val.v]
+		end)
+		return ok and enumVal or nil
+	elseif t == "NR" then
+		return NumberRange.new(val.min, val.max)
+	elseif t == "V2" then
+		return Vector2.new(val.x, val.y)
+	elseif t == "NS" then
+		local kps = {}
+		for _, kp in ipairs(val.k) do
+			table.insert(kps, NumberSequenceKeypoint.new(kp.t, kp.v, kp.e or 0))
+		end
+		return NumberSequence.new(kps)
+	elseif t == "CS" then
+		local kps = {}
+		for _, kp in ipairs(val.k) do
+			table.insert(kps, ColorSequenceKeypoint.new(kp.t, Color3.new(kp.r, kp.g, kp.b)))
+		end
+		return ColorSequence.new(kps)
+	end
+	return val
+end
+
+function PropDecoder.Set(inst, prop, rawVal)
+	local decoded = PropDecoder.Decode(rawVal)
+	if decoded ~= nil then
+		pcall(function()
+			inst[prop] = decoded
+		end)
+	end
+end
+
+local ModelBuilder = {
+	Data = nil,
+	File = "FakeGachaModels.json",
+	Url = nil,
+}
+
+function ModelBuilder.Load()
+	if ModelBuilder.Data then
+		return ModelBuilder.Data
+	end
+	if isfile and isfile(ModelBuilder.File) then
+		local ok, res = pcall(function()
+			return HttpService:JSONDecode(readfile(ModelBuilder.File))
+		end)
+		if ok and res then
+			ModelBuilder.Data = res
+			return res
+		end
+	end
+	return nil
+end
+
+function ModelBuilder.MakePart(spec)
+	local p = Instance.new("Part")
+	p.Name = spec.Name or "Part"
+	local ok, mesh = pcall(function()
+		return game:GetObjects(spec.MeshId)[1]
+	end)
+	if ok and mesh then
+		if mesh:IsA("MeshPart") then
+			p:Destroy()
+			p = mesh
+		else
+			local found = mesh:FindFirstChildWhichIsA("MeshPart", true)
+			if found then
+				p:Destroy()
+				p = found:Clone()
+			end
+			mesh:Destroy()
+		end
+	end
+	for k, v in pairs(spec.Props or {}) do
+		if not PropDecoder.Ignore[k] then
+			PropDecoder.Set(p, k, v)
+		end
+	end
+	return p
+end
+
+function ModelBuilder.AddEmitters(parent, emitters)
+	for _, emSpec in ipairs(emitters or {}) do
+		local emitter = Instance.new("ParticleEmitter")
+		for k, v in pairs(emSpec.Props or {}) do
+			PropDecoder.Set(emitter, k, v)
+		end
+		local targetParent = parent
+		if emSpec.Offset then
+			local att = Instance.new("Attachment")
+			att.CFrame = PropDecoder.Decode(emSpec.Offset)
+			att.Parent = parent
+			targetParent = att
+		end
+		emitter.Parent = targetParent
+	end
+end
+
+function ModelBuilder.Build(fruitName)
+	local data = ModelBuilder.Load()
+	local spec = data and data[fruitName]
+	if not spec then
+		return nil
+	end
+	local model = Instance.new("Model")
+	model.Name = "Fruit"
+	local rootPart = nil
+	for _, partSpec in ipairs(spec.Parts or {}) do
+		local part = ModelBuilder.MakePart(partSpec)
+		if partSpec.Offset then
+			part.CFrame = PropDecoder.Decode(partSpec.Offset)
+		else
+			rootPart = part
+		end
+		part.Parent = model
+		ModelBuilder.AddEmitters(part, partSpec.Emitters)
+	end
+	for _, childSpec in ipairs(spec.Children or {}) do
+		local inst = Instance.new(childSpec.Class)
+		inst.Name = childSpec.Name or childSpec.Class
+		for k, v in pairs(childSpec.Props or {}) do
+			PropDecoder.Set(inst, k, v)
+		end
+		inst.Parent = model
+	end
+	if rootPart then
+		model.PrimaryPart = rootPart
+	end
+	return model
+end
+
+local FruitInjector = {
+	Tools = {},
+	Items = {},
+}
+
+function FruitInjector.IsJunk(inst)
+	if inst:IsA("Script") or inst:IsA("LocalScript") or inst:IsA("ModuleScript") then
+		return true
+	end
+	if inst:IsA("Weld") or inst:IsA("WeldConstraint") or inst:IsA("Motor6D") then
+		return true
+	end
+	if inst:IsA("BodyMover") or inst:IsA("Constraint") then
+		return true
+	end
+	if inst:IsA("Sound") or inst:IsA("Animation") or inst:IsA("AnimationController") or inst:IsA("Animator") then
+		return true
+	end
+	return false
+end
+
+function FruitInjector.FindFruitModel(container)
+	if not container then
+		return nil
+	end
+	for _, child in ipairs(container:GetChildren()) do
+		if child:IsA("Tool") and not FruitInjector.Tools[child] and child:FindFirstChild("Handle") then
+			local m = child:FindFirstChild("Fruit") or child:FindFirstChildWhichIsA("Model")
+			if m then
+				return m
+			end
+		end
+	end
+	return nil
+end
+
+function FruitInjector.GetModel(fruitName)
+	local built = ModelBuilder.Build(fruitName)
+	if built then
+		return built:Clone()
+	end
+	local cacheFolder = ReplicatedStorage:FindFirstChild("MemeFakeFruits")
+	if cacheFolder then
+		local cached = cacheFolder:FindFirstChild(fruitName)
+		if cached then
+			return cached:Clone()
+		end
+	end
+	local existing = FruitInjector.FindFruitModel(LocalPlayer:FindFirstChild("Backpack"))
+		or FruitInjector.FindFruitModel(LocalPlayer.Character)
+	if existing then
+		return existing:Clone()
+	end
+	return nil
+end
+
+function FruitInjector.Attach(model, handle)
+	for _, desc in ipairs(model:GetDescendants()) do
+		if FruitInjector.IsJunk(desc) then
+			desc:Destroy()
+		end
+	end
+	model:PivotTo(handle.CFrame)
+	for _, desc in ipairs(model:GetDescendants()) do
+		if desc:IsA("BasePart") then
+			desc.Anchored = false
+			desc.CanCollide = false
+			desc.CanTouch = false
+			desc.CanQuery = false
+			desc.Massless = true
+			local weld = Instance.new("WeldConstraint")
+			weld.Part0 = handle
+			weld.Part1 = desc
+			weld.Parent = desc
+		end
+	end
+end
+
+function FruitInjector.GiveTool(fruitEntry)
+	local displayName = fruitEntry[4] .. " Fruit"
+	local assetUrl = "rbxassetid://" .. tostring(fruitEntry[3])
+	local tool = Instance.new("Tool")
+	tool.Name = displayName
+	tool.ToolTip = displayName
+	tool.TextureId = assetUrl
+	tool.CanBeDropped = false
+	tool.RequiresHandle = true
+	tool.Grip = CFrame.new(0, -0.2, 0)
+	tool:SetAttribute("FruitTool", true)
+
+	local handle = Instance.new("Part")
+	handle.Name = "Handle"
+	handle.Size = Vector3.new(1, 1, 1)
+	handle.Transparency = 1
+	handle.CanCollide = false
+	handle.Massless = true
+	handle.Parent = tool
+
+	local model = FruitInjector.GetModel(fruitEntry[1])
+	if model then
+		model.Name = "Fruit"
+		model.Parent = tool
+		FruitInjector.Attach(model, handle)
+	else
+		handle.Transparency = 0
+		handle.Color = Color3.fromRGB(170, 85, 255)
+		handle.Material = Enum.Material.Neon
+	end
+
+	local bp = LocalPlayer:FindFirstChild("Backpack")
+	if bp then
+		tool.Parent = bp
+		FruitInjector.Tools[tool] = true
+	else
+		tool:Destroy()
+	end
+end
+
+function FruitInjector.GiveInv(fruitEntry)
+	pcall(function()
+		local invCtrl = require(ReplicatedStorage.Controllers.UI.Inventory)
+		local item = {
+			Name = fruitEntry[1],
+			Count = 1,
+			Mastery = 0,
+			MasteryRequirements = { X = 1, Z = 1 },
+			Rarity = fruitEntry[2],
+			Type = "Blox Fruit",
+			Value = 2000,
+			Texture = "rbxassetid://" .. tostring(fruitEntry[3]),
+			DisplayName = fruitEntry[4] .. " Fruit",
+		}
+		table.insert(FruitInjector.Items, item)
+		local list = invCtrl:GetInventory()
+		table.insert(list, item)
+		if invCtrl.Reflow then
+			invCtrl:Reflow()
+		elseif invCtrl.Update then
+			invCtrl:Update()
+		end
+	end)
+end
+
+function FruitInjector.Give(fruitEntry)
+	if Config.Backpack then
+		FruitInjector.GiveTool(fruitEntry)
+	end
+	if Config.Inventory then
+		FruitInjector.GiveInv(fruitEntry)
+	end
+end
+
+function FruitInjector.Clear()
+	for tool in pairs(FruitInjector.Tools) do
+		if tool and tool.Parent then
+			tool:Destroy()
+		end
+	end
+	FruitInjector.Tools = {}
+	pcall(function()
+		local invCtrl = require(ReplicatedStorage.Controllers.UI.Inventory)
+		local list = invCtrl:GetInventory()
+		for _, fakeItem in ipairs(FruitInjector.Items) do
+			local idx = table.find(list, fakeItem)
+			if idx then
+				table.remove(list, idx)
+			end
+		end
+		FruitInjector.Items = {}
+		if invCtrl.Reflow then
+			invCtrl:Reflow()
+		elseif invCtrl.Update then
+			invCtrl:Update()
+		end
+	end)
+end
+
+local GachaSpinner = {
+	Spinning = false,
+	Pool = {
+		"Rocket-Rocket", "Spin-Spin", "Blade-Blade", "Spring-Spring", "Bomb-Bomb",
+		"Smoke-Smoke", "Spike-Spike", "Flame-Flame", "Ice-Ice", "Sand-Sand",
+		"Dark-Dark", "Diamond-Diamond", "Light-Light", "Rubber-Rubber", "Ghost-Ghost",
+		"Magma-Magma", "Quake-Quake", "Buddha-Buddha", "Love-Love", "Spider-Spider",
+		"Sound-Sound", "Phoenix-Phoenix", "Portal-Portal", "Pain-Pain", "Blizzard-Blizzard",
+		"Gravity-Gravity", "Mammoth-Mammoth", "T-Rex-T-Rex", "Dough-Dough", "Shadow-Shadow",
+		"Venom-Venom", "Gas-Gas", "Control-Control", "Spirit-Spirit", "Leopard-Leopard",
+		"Yeti-Yeti", "Kitsune-Kitsune", "Dragon (West)-Dragon (West)", "Dragon (East)-Dragon (East)",
+	},
+}
+
+function GachaSpinner.GetHandler()
+	if not getconnections then
+		return nil
+	end
+	local net = ReplicatedStorage:FindFirstChild("Modules")
+		and ReplicatedStorage.Modules:FindFirstChild("Net")
+	local remote = net and net:FindFirstChild("RE/SpinGacha")
+	if not remote then
+		return nil
+	end
+	for _, conn in ipairs(getconnections(remote.OnClientEvent)) do
+		if conn.Function then
+			return conn.Function
+		end
+	end
+	return nil
+end
+
+function GachaSpinner.Spin(targetFruit)
+	if GachaSpinner.Spinning then
+		return
+	end
+	local entry = FruitDB.Find(targetFruit or Config.Fruit)
+	if not entry then
+		return
+	end
+	GachaSpinner.Spinning = true
+	pcall(function()
+		local handler = GachaSpinner.GetHandler()
+		if handler then
+			handler("GachaWindow", "SummerGacha", entry[1])
+		else
+			local spinner = require(ReplicatedStorage.Controllers.UI.Spinner)
+			spinner.StartSpin("GachaWindow", GachaSpinner.Pool, entry[1])
+		end
+	end)
+	task.wait(6.8)
+	FruitInjector.Give(entry)
+	GachaSpinner.Spinning = false
+end
+
+local UI = {
+	Library = nil,
+}
+
+function UI.Load()
+	if UI.Library then
+		return UI.Library
+	end
+	if isfile and isfile("NightGlass.lua") then
+		local ok, lib = pcall(function()
+			return loadstring(readfile("NightGlass.lua"))()
+		end)
+		if ok and lib then
+			UI.Library = lib
+			return lib
+		end
+	end
+	local ok, lib = pcall(function()
+		return loadstring(game:HttpGet("https://raw.githubusercontent.com/WhiteX1208/Scripts/refs/heads/main/Ui-Library/V2Loader.luau"))()
+	end)
+	if ok and lib then
+		UI.Library = lib
+		return lib
+	end
+	return nil
+end
+
+function UI.Init()
+	local lib = UI.Load()
+	if not lib then
+		return
+	end
+	UI.Library = lib
+	local win = lib:CreateWindow({
+		Title = "Night Hub",
+		SubTitle = "Fake Gacha",
+		Size = UDim2.fromOffset(520, 360),
+		TabWidth = 130,
+		MinimizeKey = Enum.KeyCode.RightControl,
+	})
+	local tab = win:AddTab({
+		Title = "Gacha",
+		Icon = "dices",
+	})
+	tab:AddDropdown("Select Fruit", {
+		Title = "Select Fruit",
+		Values = FruitDB.GetNames(),
+		Default = Config.Fruit,
+		Callback = function(val)
+			Config.Fruit = val
+		end,
+	})
+	tab:AddToggle("Add To Backpack", {
+		Title = "Add To Backpack",
+		Default = Config.Backpack,
+		Callback = function(val)
+			Config.Backpack = val
+		end,
+	})
+	tab:AddToggle("Add To Inventory", {
+		Title = "Add To Inventory",
+		Default = Config.Inventory,
+		Callback = function(val)
+			Config.Inventory = val
+		end,
+	})
+	tab:AddButton({
+		Title = "Spin",
+		Callback = function()
+			task.spawn(GachaSpinner.Spin, Config.Fruit)
+		end,
+	})
+	tab:AddButton({
+		Title = "Clear Fake Fruits",
+		Callback = FruitInjector.Clear,
+	})
+end
+
+getgenv().FakeGacha = {
+	Spin = GachaSpinner.Spin,
+	Clear = FruitInjector.Clear,
+}
+
+UI.Init()
